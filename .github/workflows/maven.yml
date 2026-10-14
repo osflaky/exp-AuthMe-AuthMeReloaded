@@ -1,0 +1,50 @@
+name: Java CI
+
+on:
+  workflow_dispatch:
+jobs:
+  build_and_test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - jdkversion: 21
+          os: macos-latest
+          arch: arm64
+          runner: macos-latest
+          expander_leg: macos-latest-21-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-java@v4
+      with:
+        # Temurin publishes no JDK 17 build for Windows on arm64
+        # ("Could not find satisfied version for SemVer '17'"). The Microsoft
+        # Build of OpenJDK ships native Windows aarch64 builds of 17 and 21,
+        # so use it on that leg and keep Temurin everywhere else.
+        distribution: ${{ (matrix.os == 'windows-latest' && matrix.arch == 
+          'arm64') && 'microsoft' || 'temurin' }}
+        java-version: ${{ matrix.jdkversion }}
+        architecture: ${{ matrix.arch == 'arm64' && 'aarch64' || 'x64' }}
+        cache: 'maven'
+    - name: Build with Maven
+      # The arm64 leg failed while downloading plugin dependencies, before any
+      # code compiled ("Failed to read artifact descriptor for
+      # plexus-utils:3.0.24", cold Maven cache). That is a network/repository
+      # error, not a platform-specific problem in the code. Retry HTTP
+      # transfers and drop stale pooled connections so one failed download
+      # does not fail the build. These settings cover both the native
+      # (Maven 3.9+) and wagon transports.
+      # Run under bash on every OS: the Windows default shell (PowerShell)
+      # splits unquoted "-Dname.with.dots=value" arguments at the first dot,
+      # so Maven received ".connector.http.retryHandler.count=5" as a
+      # lifecycle phase.
+      shell: bash
+      run: >-
+        mvn -V -B clean package --file pom.xml
+        -Daether.connector.http.retryHandler.count=5
+        -Daether.connector.http.connectionMaxTtl=25
+        -Dmaven.wagon.http.retryHandler.count=5
+        -Dmaven.wagon.httpconnectionManager.ttlSeconds=25
+    name: build_and_test [${{ matrix.expander_leg }}]
+    timeout-minutes: 150
